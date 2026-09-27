@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IR Learner</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+<!--
+  ZHA IR Learner — https://github.com/cleydar-creator/zha-ir-learner  (MIT License)
+
+  A single-page tool for Home Assistant that learns infrared codes with a Tuya ZS06-style Zigbee IR
+  blaster paired with ZHA, and saves every learned button as a regular Home Assistant script.
+
+  How it works:
+    learn  → zha.issue_zigbee_cluster_command, cluster 0xE004 (57348), command 1, params {on_off: true}
+    read   → attribute 0 "last_learned_ir_code" of that cluster, via the same ZHA WebSocket command the
+             "Manage Zigbee clusters" screen uses (zha/devices/clusters/attributes/value)
+    send   → same cluster, command 2, params {code}
+    save   → POST /api/config/script/config/ir_btn_<name> (the API the HA script editor uses) → admin user
+  The cluster is provided by the zha-quirks quirk zhaquirks.tuya.ts1201 (ZosungIRBlaster / _ZS06).
+
+  Connection: opened as a Home Assistant "Webpage" panel it reuses your HA session
+  (window.parent.hassConnection); opened on its own it asks for a long-lived access token.
+-->
+<style>
+  :root {
+    --bg: #f3f5f8; --surface: #ffffff; --surface-2: #eef1f5; --border: #d9dee6;
+    --text: #15191f; --text-dim: #647084; --blue: #2f6fe4; --green: #1f9d55; --red: #d93a3a; --amber: #c9860b;
+    --radius: 14px; color-scheme: light;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1116; --surface: #161b23; --surface-2: #1d232d; --border: #2a3240; --text: #e9edf3; --text-dim: #8d97a8;
+      --blue: #4c8dff; --green: #3ecf7a; --red: #ff5d5d; --amber: #f2b441; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); padding: 20px 16px 40px; }
+  .wrap { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  header { display: flex; align-items: center; gap: 12px; }
+  header .mdi { font-size: 32px; color: var(--blue); }
+  header h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+  header p { margin: 2px 0 0; color: var(--text-dim); font-size: 13px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); margin: 0 0 10px; }
+  .learn { display: flex; gap: 8px; flex-wrap: wrap; }
+  .learn input, select { flex: 1 1 220px; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 12px; font-size: 16px; font-family: inherit; }
+  select { width: 100%; }
+  .btn { border-radius: 10px; padding: 12px 16px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); display: inline-flex; align-items: center; gap: 6px; touch-action: manipulation; font-family: inherit; }
+  .btn.go { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.danger { color: var(--red); }
+  .btn.small { padding: 8px 12px; font-size: 13.5px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .steps { margin: 10px 0 0; padding-left: 20px; color: var(--text-dim); font-size: 13.5px; line-height: 1.55; }
+  .status { border-radius: 10px; padding: 12px; font-size: 14.5px; line-height: 1.45; margin-top: 12px; display: none; }
+  .status.wait { display: block; background: rgba(76, 141, 255, .12); border: 1px solid rgba(76, 141, 255, .45); }
+  .status.ok { display: block; background: rgba(62, 207, 122, .12); border: 1px solid rgba(62, 207, 122, .45); }
+  .status.err { display: block; background: rgba(255, 93, 93, .12); border: 1px solid rgba(255, 93, 93, .45); }
+  .status code { font-size: 12.5px; }
+  .count { font-variant-numeric: tabular-nums; font-weight: 800; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; margin-bottom: 8px; }
+  .row > .mdi { font-size: 24px; color: var(--text-dim); }
+  .row .nm { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+  .row .nm small { display: block; font-weight: 500; color: var(--text-dim); font-size: 12px; }
+  .empty { color: var(--text-dim); font-size: 14px; line-height: 1.5; }
+  .gate input { width: 100%; margin: 8px 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 10px; font-family: ui-monospace, monospace; font-size: 13px; }
+  .conn { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); display: inline-block; }
+  .dot.on { background: var(--green); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="mdi mdi-remote"></span>
+    <div><h1 data-t="title"></h1><p data-t="subtitle"></p></div>
+  </header>
+
+  <div class="card gate" id="gate" hidden>
+    <h2 data-t="gateTitle"></h2>
+    <div class="empty" data-t="gateText"></div>
+    <input id="gate-token" type="password" autocomplete="off">
+    <button class="btn go" id="gate-go" data-t="connect"></button>
+  </div>
+
+  <div class="card" id="device-card">
+    <h2 data-t="device"></h2>
+    <select id="device"></select>
+    <div class="empty" id="device-note" hidden></div>
+  </div>
+
+  <div class="card">
+    <h2 data-t="learnTitle"></h2>
+    <div class="learn">
+      <input id="name" type="text" maxlength="40" autocomplete="off">
+      <button class="btn go" id="learn-btn"><span class="mdi mdi-record-rec"></span> <span data-t="learn"></span></button>
+    </div>
+    <ol class="steps"><li data-t="step1"></li><li data-t="step2"></li><li data-t="step3"></li></ol>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-t="learned"></h2>
+    <div id="list"><div class="empty" data-t="loading"></div></div>
+  </div>
+
+  <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-txt"></span></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // ── Texts (English + Spanish; picked from the browser language) ─────────────
+  const I18N = {
+    en: {
+      title: 'IR Learner', subtitle: 'Learn buttons from any infrared remote and save them as Home Assistant scripts.',
+      gateTitle: 'Connect to Home Assistant',
+      gateText: 'Open this page from its Home Assistant panel, or paste a long-lived access token (Profile → Security).',
+      tokenPh: 'Long-lived access token', connect: 'Connect', device: 'IR blaster',
+      noDevice: 'No compatible IR blaster found in ZHA. Pair a Tuya ZS06 / TS1201 IR blaster with ZHA and reload this page.',
+      learnTitle: 'Learn a new button', namePh: 'Name (e.g. TV power)', learn: 'Learn',
+      step1: 'Type a name and press <b>Learn</b>: the blaster listens for 20 s.',
+      step2: 'Point the original remote at the blaster from 5–10 cm and press the button <b>once</b>.',
+      step3: 'A script is created automatically. Use it in automations, scenes or voice.',
+      learned: 'Learned buttons', loading: 'Loading…',
+      none: 'Nothing learned yet. Type a name above and press Learn.',
+      test: 'Test', del: 'Delete', confirmDel: 'Delete?',
+      needName: 'Type a name for the button first.', badName: 'Use at least one letter or number in the name.',
+      exists: (n) => `A button called “${n}” already exists. Delete it first or use another name.`,
+      listening: (n, s) => `<b>Listening…</b> Point the remote at the blaster and press the “${n}” button <b>once</b>. <span class="count">${s} s</span>`,
+      noCode: 'No new code received. Move the remote closer and try again.<br><small>If it is the same button you learned last, the code does not change and cannot be detected: learn any other button first.</small>',
+      saved: (n, id) => `✓ Learned and saved as the script <b>“${n}”</b> (<code>script.${id}</code>). Test it below.`,
+      sent: (n) => `Sent “${n}”.`, deleted: 'Button deleted.',
+      error: 'Error: ', admin: ' — an administrator user is required',
+      connPanel: 'Connected to Home Assistant · panel session', connToken: 'Connected to Home Assistant · token',
+      disconnected: 'Connection closed — reload the page', noConn: 'Not connected', badToken: 'Invalid token',
+      cantConnect: 'Could not connect to Home Assistant', desc: (d) => `IR button learned with IR Learner (${d}).`,
+    },
+    es: {
+      title: 'Aprender IR', subtitle: 'Aprende botones de cualquier mando por infrarrojos y guárdalos como scripts de Home Assistant.',
+      gateTitle: 'Conexión con Home Assistant',
+      gateText: 'Abre esta página desde su panel de Home Assistant, o pega un token de larga duración (Perfil → Seguridad).',
+      tokenPh: 'Token de larga duración', connect: 'Conectar', device: 'Emisor IR',
+      noDevice: 'No hay ningún emisor IR compatible en ZHA. Empareja un Tuya ZS06 / TS1201 con ZHA y recarga la página.',
+      learnTitle: 'Aprender un botón nuevo', namePh: 'Nombre (p. ej. TV encender)', learn: 'Aprender',
+      step1: 'Escribe el nombre y pulsa <b>Aprender</b>: el emisor escucha durante 20 s.',
+      step2: 'Apunta el mando original al emisor, a 5–10 cm, y pulsa <b>una vez</b> el botón.',
+      step3: 'Se crea el script solo. Úsalo en automatizaciones, escenas o por voz.',
+      learned: 'Botones aprendidos', loading: 'Cargando…',
+      none: 'Todavía no hay ninguno. Escribe un nombre arriba y pulsa Aprender.',
+      test: 'Probar', del: 'Borrar', confirmDel: '¿Borrar?',
+      needName: 'Escribe primero un nombre para el botón.', badName: 'Usa al menos una letra o un número en el nombre.',
+      exists: (n) => `Ya existe un botón llamado «${n}». Bórralo antes o usa otro nombre.`,
+      listening: (n, s) => `<b>Escuchando…</b> Apunta el mando al emisor y pulsa <b>una vez</b> el botón «${n}». <span class="count">${s} s</span>`,
+      noCode: 'No ha llegado ningún código nuevo. Acerca más el mando y vuelve a intentarlo.<br><small>Si es el mismo botón que el último que aprendiste, el código no cambia y no se detecta: aprende antes otro botón cualquiera.</small>',
+      saved: (n, id) => `✓ Aprendido y guardado como el script <b>«${n}»</b> (<code>script.${id}</code>). Pruébalo abajo.`,
+      sent: (n) => `Enviado «${n}».`, deleted: 'Botón borrado.',
+      error: 'Error: ', admin: ' — hace falta un usuario administrador',
+      connPanel: 'Conectado a Home Assistant · sesión del panel', connToken: 'Conectado a Home Assistant · token',
+      disconnected: 'Conexión cerrada — recarga la página', noConn: 'Sin conexión', badToken: 'Token no válido',
+      cantConnect: 'No se pudo conectar con Home Assistant', desc: (d) => `Botón IR aprendido con Aprender IR (${d}).`,
+    },
+  };
+  // Language: ?lang=en / ?lang=es in the panel URL, otherwise the browser language.
+  const _qLang = new URLSearchParams(location.search).get('lang');
+  const LANG = I18N[_qLang] ? _qLang : (/^es\b/i.test(navigator.language || '') ? 'es' : 'en');
+  const T = I18N[LANG];
+  document.documentElement.lang = LANG;
+  document.querySelectorAll('[data-t]').forEach((el) => { el.innerHTML = T[el.dataset.t]; });
+  document.getElementById('name').placeholder = T.namePh;
+  document.getElementById('gate-token').placeholder = T.tokenPh;
+  document.title = T.title;
+
+  const IR_CLUSTER = 57348, LEARN_SECS = 20, STORE_KEY = 'zha_ir_learner_ieee';
+  const $ = (id) => document.getElementById(id);
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const slug = (t) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  const irBase = () => ({ ieee: $('device').value, endpoint_id: 1, cluster_id: IR_CLUSTER, cluster_type: 'in', command_type: 'server' });
+
+  // ── Connection: HA panel session, or our own WebSocket client with a token ──
+  let api = null;
+  async function fromParent() {
+    try {
+      const hc = window.parent !== window && window.parent.hassConnection;
+      if (!hc) return null;
+      const { conn, auth } = await hc;
+      return {
+        send: (m) => conn.sendMessagePromise(m),
+        token: async () => { if (auth.expired) await auth.refreshAccessToken(); return auth.accessToken; },
+        onState: (cb) => conn.subscribeEvents((ev) => cb(ev.data), 'state_changed'),
+      };
+    } catch (e) { return null; }
+  }
+  function fromToken(tok) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/websocket');
+      let id = 1; const pend = {}; const subs = {};
+      ws.onmessage = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.type === 'auth_required') ws.send(JSON.stringify({ type: 'auth', access_token: tok }));
+        else if (m.type === 'auth_invalid') reject(new Error(T.badToken));
+        else if (m.type === 'auth_ok') resolve({
+          send: (msg) => new Promise((ok, ko) => { const i = id++; pend[i] = { ok, ko }; ws.send(JSON.stringify({ id: i, ...msg })); }),
+          token: async () => tok,
+          onState: (cb) => { const i = id++; subs[i] = cb; ws.send(JSON.stringify({ id: i, type: 'subscribe_events', event_type: 'state_changed' })); },
+        });
+        else if (m.type === 'result' && pend[m.id]) { const p = pend[m.id]; delete pend[m.id]; m.success ? p.ok(m.result) : p.ko(new Error((m.error && m.error.message) || 'error')); }
+        else if (m.type === 'event' && subs[m.id]) subs[m.id](m.event.data);
+      };
+      ws.onerror = () => reject(new Error(T.cantConnect));
+      ws.onclose = () => { $('conn-dot').className = 'dot'; $('conn-txt').textContent = T.disconnected; };
+    });
+  }
+
+  // ── Compatible IR blasters in ZHA (model TS1201 or a ts1201/Zosung quirk) ──
+  async function loadDevices() {
+    const all = await api.send({ type: 'zha/devices' });
+    const ir = (all || []).filter((d) => d.model === 'TS1201' || /ts1201|zosung/i.test(d.quirk_class || ''));
+    const sel = $('device');
+    if (!ir.length) {
+      sel.hidden = true; $('device-note').hidden = false; $('device-note').textContent = T.noDevice;
+      $('learn-btn').disabled = true; return;
+    }
+    let saved = ''; try { saved = localStorage.getItem(STORE_KEY) || ''; } catch (e) { /* no storage */ }
+    sel.innerHTML = ir.map((d) => `<option value="${esc(d.ieee)}">${esc(d.user_given_name || d.name || d.ieee)} · ${esc(d.manufacturer || '')} ${esc(d.model || '')}</option>`).join('');
+    if (ir.some((d) => d.ieee === saved)) sel.value = saved;
+    sel.onchange = () => { try { localStorage.setItem(STORE_KEY, sel.value); } catch (e) { /* no storage */ } };
+  }
+
+  // ── Learned buttons = scripts "script.ir_btn_*" ──
+  const scripts = {};
+  const name = (id) => ((scripts[id] && scripts[id].attributes) || {}).friendly_name || id;
+  async function loadScripts() {
+    const all = await api.send({ type: 'get_states' });
+    all.filter((s) => s.entity_id.startsWith('script.ir_btn_')).forEach((s) => { scripts[s.entity_id] = s; });
+    render();
+  }
+  function render() {
+    const ids = Object.keys(scripts).sort((a, b) => name(a).localeCompare(name(b)));
+    $('list').innerHTML = ids.length ? ids.map((id) => `<div class="row"><span class="mdi mdi-remote-tv"></span>
+        <div class="nm">${esc(name(id))}<small>${esc(id)}</small></div>
+        <button class="btn small" data-test="${id}"><span class="mdi mdi-play"></span> ${T.test}</button>
+        <button class="btn small danger" data-del="${id}" title="${T.del}"><span class="mdi mdi-delete"></span></button></div>`).join('')
+      : `<div class="empty">${T.none}</div>`;
+  }
+  function status(cls, html) { const el = $('status'); el.className = 'status ' + (cls || ''); el.innerHTML = html || ''; }
+
+  async function readCode() {
+    const r = await api.send({ type: 'zha/devices/clusters/attributes/value', ieee: $('device').value, endpoint_id: 1, cluster_id: IR_CLUSTER, cluster_type: 'in', attribute: 0 });
+    return typeof r === 'string' ? r : (r && r.value) || '';
+  }
+  async function scriptApi(method, id, body) {
+    const res = await fetch(`/api/config/script/config/${id}`, {
+      method, headers: { Authorization: 'Bearer ' + await api.token(), 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}${res.status === 401 || res.status === 403 ? T.admin : ''}`);
+    return res.json().catch(() => ({}));
+  }
+
+  let busy = false;
+  async function learn() {
+    if (busy || !api || !$('device').value) return;
+    const nm = $('name').value.trim();
+    if (!nm) { status('err', T.needName); $('name').focus(); return; }
+    if (!slug(nm)) { status('err', T.badName); return; }
+    const id = 'ir_btn_' + slug(nm);
+    if (scripts['script.' + id]) { status('err', T.exists(esc(nm))); return; }
+    busy = true; $('learn-btn').disabled = true;
+    try {
+      let prev = '';
+      try { prev = await readCode(); } catch (e) { /* no previous code */ }
+      await api.send({ type: 'call_service', domain: 'zha', service: 'issue_zigbee_cluster_command', service_data: { ...irBase(), command: 1, params: { on_off: true } } });
+      let code = ''; const t0 = Date.now();
+      while (Date.now() - t0 < LEARN_SECS * 1000) {
+        status('wait', T.listening(esc(nm), Math.ceil(LEARN_SECS - (Date.now() - t0) / 1000)));
+        await new Promise((r) => setTimeout(r, 1000));
+        try { const c = await readCode(); if (c && c !== prev) { code = c; break; } } catch (e) { /* retry */ }
+      }
+      if (!code) { status('err', T.noCode); return; }
+      await scriptApi('POST', id, {
+        alias: nm, icon: 'mdi:remote-tv', mode: 'single', description: T.desc(new Date().toLocaleString()),
+        sequence: [{ action: 'zha.issue_zigbee_cluster_command', data: { ...irBase(), command: 2, params: { code } } }],
+      });
+      try { await api.send({ type: 'call_service', domain: 'script', service: 'reload', service_data: {} }); } catch (e) { /* the config API already reloads */ }
+      status('ok', T.saved(esc(nm), id));
+      $('name').value = '';
+      setTimeout(loadScripts, 1200);
+    } catch (e) {
+      status('err', T.error + esc(e.message || String(e)));
+    } finally { busy = false; $('learn-btn').disabled = false; }
+  }
+
+  $('learn-btn').onclick = learn;
+  $('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') learn(); });
+  $('list').addEventListener('click', async (e) => {
+    const t = e.target.closest('[data-test]'), d = e.target.closest('[data-del]');
+    if (t && api) {
+      t.disabled = true;
+      try { await api.send({ type: 'call_service', domain: 'script', service: 'turn_on', service_data: { entity_id: t.dataset.test } }); status('ok', T.sent(esc(name(t.dataset.test)))); }
+      catch (err) { status('err', T.error + esc(err.message)); }
+      t.disabled = false;
+    }
+    if (d && api) {
+      if (d.dataset.confirm !== '1') { d.dataset.confirm = '1'; d.textContent = T.confirmDel; return; }
+      try { await scriptApi('DELETE', d.dataset.del.replace('script.', '')); delete scripts[d.dataset.del]; render(); status('ok', T.deleted); }
+      catch (err) { status('err', T.error + esc(err.message)); }
+    }
+  });
+
+  async function start(a, how) {
+    api = a;
+    $('gate').hidden = true;
+    $('conn-dot').className = 'dot on'; $('conn-txt').textContent = how;
+    api.onState((d) => {
+      if (!d || !d.entity_id || !d.entity_id.startsWith('script.ir_btn_')) return;
+      if (d.new_state) scripts[d.entity_id] = d.new_state; else delete scripts[d.entity_id];
+      render();
+    });
+    try { await loadDevices(); } catch (e) { status('err', T.error + esc(e.message)); }
+    await loadScripts();
+  }
+  $('conn-txt').textContent = T.noConn;
+  (async () => {
+    const p = await fromParent();
+    if (p) return start(p, T.connPanel);
+    let tok = ''; try { tok = localStorage.getItem('zha_ir_learner_token') || localStorage.getItem('ha_token') || ''; } catch (e) { /* no storage */ }
+    if (tok) { try { return start(await fromToken(tok), T.connToken); } catch (e) { /* ask for a token */ } }
+    $('gate').hidden = false;
+    $('gate-go').onclick = async () => {
+      const t = $('gate-token').value.trim(); if (!t) return;
+      try { const a = await fromToken(t); try { localStorage.setItem('zha_ir_learner_token', t); } catch (e) { /* no storage */ } start(a, T.connToken); }
+      catch (e) { $('conn-txt').textContent = e.message; }
+    };
+  })();
+})();
+</script>
+</body>
+</html>
