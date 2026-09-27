@@ -46,7 +46,7 @@ To check yours: **Settings → Devices & services → ZHA → your device**. The
 
 3. **Add it as a panel**
    **Settings → Dashboards → Add dashboard → Webpage**
-   - URL: `/local/ir-learner.html` — use this **relative** URL (no `http://…`), so it also works from the mobile app and remote access (https).
+   - URL: `/local/ir-learner.html?v=1` — use this **relative** URL (no `http://…`), so it also works from the mobile app and remote access (https).
    - Title: `IR Learner` · Icon: `mdi:remote`
 
    It will appear in the sidebar. Opened this way, the page reuses your Home Assistant session: no token needed.
@@ -99,6 +99,10 @@ ir_btn_tv_power:
 ```
 
 Codes are often longer than 255 characters, the limit of an `input_text` helper. That's why each code lives inside its own script instead of a text helper.
+
+## Updating
+
+Home Assistant tells browsers to cache files under `/local/` for a month. After replacing `ir-learner.html` with a newer version, **change the panel URL** so the browser fetches the new file, e.g. from `/local/ir-learner.html` to `/local/ir-learner.html?v=2` (then `?v=3` next time, and so on).
 
 ## Tips & known limitations
 
