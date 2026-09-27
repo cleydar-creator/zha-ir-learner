@@ -4,9 +4,11 @@
 
 Learning IR codes with a Tuya ZS06-style blaster in ZHA normally means calling cluster commands by hand in *Developer tools*, digging into *Manage Zigbee clusters* to read a long attribute, and copying it into a script yourself. This is a single HTML page that does all of that for you:
 
-1. Type a name (e.g. *TV power*) and press **Learn**.
+1. Type a name (e.g. *TV power*), optionally pick an **area** and **labels**, and press **Learn**.
 2. Point your original remote at the blaster and press the button once.
-3. A Home Assistant script (`script.ir_btn_tv_power`) is created automatically. Use it in automations, scenes, dashboards or with voice.
+3. A Home Assistant script (`script.ir_btn_tv_power`) is created automatically, already assigned to that area and those labels. Use it in automations, scenes, dashboards or with voice.
+
+Learned buttons are listed **grouped by IR blaster**, each with *Test*, *Edit area & labels* and *Delete*.
 
 <p align="center">
   <img src="docs/screenshot-en-dark.png" width="420" alt="IR Learner in English, dark theme">
@@ -56,9 +58,11 @@ To check yours: **Settings → Devices & services → ZHA → your device**. The
 ## Usage
 
 1. Choose your IR blaster (only needed if you have more than one).
-2. Type a name for the button and press **Learn**. The blaster listens for 20 seconds (its LED lights up).
+2. Type a name for the button. Optionally choose an **area** and one or more **labels** (you can create a new label right there), then press **Learn**. The blaster listens for 20 seconds (its LED lights up).
 3. Point the original remote at the blaster from 5–10 cm and press the button **once**.
-4. Done: the button appears under *Learned buttons* with **Test** and **Delete**, and as a script in **Settings → Automations & scenes → Scripts**.
+4. Done: the button appears under *Learned buttons*, in the group of its blaster, with **Test**, **✏️ Edit area & labels** and **Delete**. It also appears as a script in **Settings → Automations & scenes → Scripts**, and in its area.
+
+With several blasters you can reuse a name: if *TV power* already exists on another blaster, the new script gets the blaster's name in its id (e.g. `script.ir_btn_bedroom_ir_tv_power`).
 
 Use the script anywhere, for example in an automation:
 
@@ -77,6 +81,8 @@ The `ts1201` quirk from [zha-quirks](https://github.com/zigpy/zha-device-handler
 | Read the learned code | WebSocket `zha/devices/clusters/attributes/value` → attribute `0` (`last_learned_ir_code`). This is what *Manage Zigbee clusters* uses. The page polls it every second until it changes. |
 | Save the button | `POST /api/config/script/config/ir_btn_<name>` with a script whose only action sends the code |
 | Send the code | `zha.issue_zigbee_cluster_command` → cluster `57348`, **command `2`**, `params: {code: "<learned code>"}` |
+| Area & labels | WebSocket `config/entity_registry/update` on the script entity (`config/label_registry/create` for new labels) |
+| Group by blaster | the blaster's IEEE is read back from each script's config (`GET /api/config/script/config/<id>`) |
 
 Each generated script looks like this, so you can also write or edit them by hand:
 
