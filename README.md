@@ -17,6 +17,9 @@ Learned buttons are listed **grouped by IR blaster**, each with *Test*, *Edit ar
 
 No custom integration, no HACS, no YAML to edit: it's one static file served by Home Assistant itself.
 
+> [!IMPORTANT]
+> The Home Assistant user opening the page must be an **administrator**. The page creates and deletes scripts, sets areas and creates labels, and Home Assistant only allows that to admins. Non-admin users get an *HTTP 401/403* error when saving.
+
 ## Compatible hardware
 
 | Device | Zigbee model | Manufacturer ID | Status |
@@ -32,7 +35,7 @@ To check yours: **Settings → Devices & services → ZHA → your device**. The
 
 - Home Assistant with the **ZHA** integration (Zigbee2MQTT is **not** supported — it uses a different API).
 - The IR blaster paired with ZHA (see below).
-- An **administrator** user: the page creates and deletes scripts through the same API the HA script editor uses.
+- An **administrator** user (see the note above): the page creates and deletes scripts through the same API the HA script editor uses, and edits areas and labels in the entity registry.
 
 ## Installation
 
@@ -117,6 +120,19 @@ Home Assistant tells browsers to cache files under `/local/` for a month. After 
 - **The learned code works, but the device doesn't react?** The blaster needs a clear line of sight to the TV/AC when sending.
 - **HTTP 401/403 when saving** means the logged-in user is not an administrator.
 - Opened **outside** a Home Assistant panel (e.g. directly in a browser), the page asks for a long-lived access token (**Profile → Security**) and stores it in that browser's local storage.
+
+## Alternatives
+
+Other ways to use these IR blasters with Home Assistant, depending on what you need:
+
+| Project | Type | Best for |
+|---|---|---|
+| **ZHA IR Learner** (this) | One HTML file, no install | Quickly turning remote buttons into plain HA scripts (with area & labels) |
+| [IR Learning Hub](https://github.com/slawa19/IR-Learning-Hub) | Custom integration (HACS) + Lovelace card | A full command library: devices/locations, native `remote`/`media_player` entities, export/import |
+| [SmartIR](https://github.com/smartHomeHub/SmartIR) ([ZS06/UFO-R11 guide](https://community.home-assistant.io/t/guide-how-to-use-the-zs06-or-ufo-r11-zigbee-ir-controllers-with-smartir/939301)) | Custom integration | Climate / media entities from ready-made code databases (e.g. air conditioners) |
+| Manual: *Manage Zigbee clusters* ([guide](https://jacroe.com/journal/post/2026-04-22-23-33-47_setting-up-using-tuya-zigbee-ir-remote)) | Built into ZHA | Learning one or two codes by hand |
+
+Home Assistant 2026.4 added a native infrared framework, but as of now TS1201 blasters in ZHA still don't expose native IR entities or a learning UI.
 
 ## Contributing
 
